@@ -174,7 +174,7 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 				"protocolVersion": "2024-11-05",
 				"serverInfo": map[string]any{
 					"name":    "hackless-mcp",
-					"version": "0.1.0",
+					"version": "0.1.2",
 				},
 				"capabilities": map[string]any{
 					"tools": map[string]any{"listChanged": false},
