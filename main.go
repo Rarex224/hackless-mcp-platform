@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -187,9 +188,25 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 			Result: map[string]any{
 				"tools": []toolDef{
 					{
+						Name:        "health",
+						Description: "Check whether the public Hackless API is healthy.",
+						InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+					},
+					{
 						Name:        "list_challenges",
 						Description: "List public Hackless challenges.",
 						InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+					},
+					{
+						Name:        "get_challenge",
+						Description: "Get a specific public challenge by slug.",
+						InputSchema: map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"slug": map[string]any{"type": "string"},
+							},
+							"required": []string{"slug"},
+						},
 					},
 					{
 						Name:        "get_my_progress",
@@ -197,9 +214,31 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 						InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 					},
 					{
+						Name:        "get_public_profile",
+						Description: "Get a public profile by user ID.",
+						InputSchema: map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"userId": map[string]any{"type": "string"},
+							},
+							"required": []string{"userId"},
+						},
+					},
+					{
 						Name:        "view_leaderboard",
 						Description: "Get the public leaderboard.",
 						InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+					},
+					{
+						Name:        "list_writeups_for_challenge",
+						Description: "List writeups for a solved challenge.",
+						InputSchema: map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"slug": map[string]any{"type": "string"},
+							},
+							"required": []string{"slug"},
+						},
 					},
 					{
 						Name:        "submit_flag",
@@ -256,9 +295,25 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 	}
 
 	switch payload.Name {
+	case "health":
+		var data any
+		if err := s.getJSON("/api/public/health", &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
 	case "list_challenges":
 		var data any
 		if err := s.getJSON("/api/public/challenges", &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+	case "get_challenge":
+		slug, _ := payload.Arguments["slug"].(string)
+		if slug == "" {
+			return nil, fmt.Errorf("slug is required")
+		}
+		var data any
+		if err := s.getJSON("/api/public/challenges/"+url.PathEscape(slug), &data); err != nil {
 			return nil, err
 		}
 		return mcpText(data), nil
@@ -268,9 +323,29 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 			return nil, err
 		}
 		return mcpText(data), nil
+	case "get_public_profile":
+		userID, _ := payload.Arguments["userId"].(string)
+		if userID == "" {
+			return nil, fmt.Errorf("userId is required")
+		}
+		var data any
+		if err := s.getJSON("/api/public/profiles/"+url.PathEscape(userID), &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
 	case "view_leaderboard":
 		var data any
 		if err := s.getJSON("/api/public/leaderboard", &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+	case "list_writeups_for_challenge":
+		slug, _ := payload.Arguments["slug"].(string)
+		if slug == "" {
+			return nil, fmt.Errorf("slug is required")
+		}
+		var data any
+		if err := s.getJSON("/api/public/challenges/"+url.PathEscape(slug)+"/writeups", &data); err != nil {
 			return nil, err
 		}
 		return mcpText(data), nil
@@ -281,7 +356,7 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("slug and flag are required")
 		}
 		var data any
-		if err := s.postJSON(fmt.Sprintf("/api/public/challenges/%s/submit", slug), map[string]string{"flag": flag}, &data); err != nil {
+		if err := s.postJSON(fmt.Sprintf("/api/public/challenges/%s/submit", url.PathEscape(slug)), map[string]string{"flag": flag}, &data); err != nil {
 			return nil, err
 		}
 		return mcpText(data), nil
