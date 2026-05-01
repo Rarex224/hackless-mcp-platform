@@ -8,6 +8,7 @@ This is the public distribution repo for the Hackless MCP server. It is meant to
 
 - `HACKLESS_BASE_URL` - default `https://hackless.dev`
 - `HACKLESS_COOKIE` - optional session cookie for authenticated tools
+- `HACKLESS_EVENT_API_KEY` - optional event-scoped API key for event management tools
 - `ADDR` - listen address, default `:8000`
 
 ## Run locally
@@ -56,6 +57,12 @@ For API-key auth, set:
 HACKLESS_API_KEY='your-mcp-key' /absolute/path/to/hackless-mcp-platform/hackless-mcp
 ```
 
+If you also want Claude to operate on a specific event, add the event API key too:
+
+```bash
+HACKLESS_EVENT_API_KEY='your-event-api-key' /absolute/path/to/hackless-mcp-platform/hackless-mcp
+```
+
 Install via Go:
 
 ```bash
@@ -68,6 +75,7 @@ If you want to host the MCP server as a separate service, deploy this repo as it
 
 - `HACKLESS_BASE_URL=https://hackless.dev`
 - `HACKLESS_API_KEY=<your_hackless_api_key>`
+- `HACKLESS_EVENT_API_KEY=<your_event_api_key>`
 
 For Claude Desktop usage you usually do not need Railway; the normal flow is to install the binary locally and let Claude launch it as a stdio MCP server.
 

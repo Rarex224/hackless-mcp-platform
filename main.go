@@ -9,8 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -42,10 +42,11 @@ type toolDef struct {
 }
 
 type mcpServer struct {
-	baseURL string
-	cookie  string
-	apiKey  string
-	client  *http.Client
+	baseURL     string
+	cookie      string
+	apiKey      string
+	eventAPIKey string
+	client      *http.Client
 }
 
 func main() {
@@ -56,9 +57,10 @@ func main() {
 
 	baseURL := resolveBaseURL(*baseURLFlag, flag.Args())
 	srv := &mcpServer{
-		baseURL: baseURL,
-		cookie:  env("HACKLESS_COOKIE", ""),
-		apiKey:  env("HACKLESS_API_KEY", ""),
+		baseURL:     baseURL,
+		cookie:      env("HACKLESS_COOKIE", ""),
+		apiKey:      env("HACKLESS_API_KEY", ""),
+		eventAPIKey: env("HACKLESS_EVENT_API_KEY", ""),
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -287,8 +289,8 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 
 func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 	var payload struct {
-		Name      string                 `json:"name"`
-		Arguments map[string]any         `json:"arguments"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &payload); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -391,6 +393,9 @@ func (s *mcpServer) requestJSON(method, path string, body any, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	if s.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+	if s.eventAPIKey != "" {
+		req.Header.Set("X-Hackless-Event-API-Key", s.eventAPIKey)
 	}
 	if s.cookie != "" {
 		req.Header.Set("Cookie", s.cookie)
