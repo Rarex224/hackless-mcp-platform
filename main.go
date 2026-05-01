@@ -44,7 +44,6 @@ type mcpServer struct {
 	baseURL      string
 	cookie       string
 	apiKey       string
-	eventApiKey  string
 	client       *http.Client
 }
 
@@ -79,93 +78,6 @@ var globalTools = []toolDef{
 	},
 }
 
-// Event tools keyed by their enabled flag (require event API key)
-var eventToolDefs = map[string]toolDef{
-	"fetchEventDetails": {
-		Name:        "get_event",
-		Description: "Get comprehensive information about the current event.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-	},
-	"updateEvent": {
-		Name:        "update_event",
-		Description: "Update event details like title, schedule, scope or location.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"title":    map[string]any{"type": "string"},
-				"location": map[string]any{"type": "string"},
-				"scope":    map[string]any{"type": "string", "enum": []string{"public", "community", "private"}},
-			},
-		},
-	},
-	"listWidgets": {
-		Name:        "get_widgets",
-		Description: "List all challenges/widgets for the current event.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-	},
-	"getWidget": {
-		Name:        "get_single_widget",
-		Description: "Get details of a specific challenge/widget by slug.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"slug": map[string]any{"type": "string", "description": "Challenge slug"},
-			},
-			"required": []string{"slug"},
-		},
-	},
-	"createWidget": {
-		Name:        "create_widget",
-		Description: "Add a new challenge/widget to the event.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"title":       map[string]any{"type": "string"},
-				"slug":        map[string]any{"type": "string"},
-				"difficulty":  map[string]any{"type": "string", "enum": []string{"Easy", "Medium", "Hard", "Insane"}},
-				"points":      map[string]any{"type": "integer"},
-				"type":        map[string]any{"type": "string", "enum": []string{"web", "pwn", "reverse", "mobile", "file"}},
-				"rewardBadge": map[string]any{"type": "string"},
-			},
-			"required": []string{"title", "slug", "difficulty", "points", "type", "rewardBadge"},
-		},
-	},
-	"updateWidget": {
-		Name:        "update_widget",
-		Description: "Update a challenge/widget in the event.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"slug":       map[string]any{"type": "string", "description": "Widget slug to update"},
-				"title":      map[string]any{"type": "string"},
-				"difficulty": map[string]any{"type": "string"},
-				"points":     map[string]any{"type": "integer"},
-			},
-			"required": []string{"slug"},
-		},
-	},
-	"deleteWidget": {
-		Name:        "delete_widget",
-		Description: "Remove a challenge/widget from the event.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"slug": map[string]any{"type": "string", "description": "Widget slug to delete"},
-			},
-			"required": []string{"slug"},
-		},
-	},
-}
-
-// Internal event tool name -> enabled key mapping for reverse lookup
-var toolNameToKey = map[string]string{}
-
-func init() {
-	for key, def := range eventToolDefs {
-		toolNameToKey[def.Name] = key
-	}
-}
-
 func main() {
 	httpMode := flag.Bool("http", false, "run as a local HTTP test server instead of stdio MCP")
 	addr := flag.String("addr", ":8000", "HTTP listen address")
@@ -174,18 +86,12 @@ func main() {
 
 	baseURL := resolveBaseURL(*baseURLFlag, flag.Args())
 	srv := &mcpServer{
-		baseURL:     baseURL,
-		cookie:      env("HACKLESS_COOKIE", ""),
-		apiKey:      env("HACKLESS_API_KEY", ""),
-		eventApiKey: env("HACKLESS_EVENT_API_KEY", ""),
+		baseURL: baseURL,
+		cookie:  env("HACKLESS_COOKIE", ""),
+		apiKey:  env("HACKLESS_API_KEY", ""),
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
-	}
-
-	// If HACKLESS_API_KEY looks like an event key (starts with hk_), treat it as event key too
-	if srv.eventApiKey == "" && strings.HasPrefix(srv.apiKey, "hk_") {
-		srv.eventApiKey = srv.apiKey
 	}
 
 	if *httpMode {
@@ -344,37 +250,10 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 	}
 }
 
-// buildToolList returns the list of available tools based on API keys and event configuration.
+// buildToolList returns the list of available tools.
 func (s *mcpServer) buildToolList() []toolDef {
 	tools := make([]toolDef, len(globalTools))
 	copy(tools, globalTools)
-
-	if s.eventApiKey == "" {
-		return tools
-	}
-
-	// Fetch event to get enabled tools
-	var eventResp struct {
-		Event struct {
-			Tools []struct {
-				Key     string `json:"key"`
-				Enabled bool   `json:"enabled"`
-			} `json:"tools"`
-		} `json:"event"`
-	}
-	if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-		log.Printf("failed to fetch event tools: %v", err)
-		return tools
-	}
-
-	for _, t := range eventResp.Event.Tools {
-		if t.Enabled {
-			if def, ok := eventToolDefs[t.Key]; ok {
-				tools = append(tools, def)
-			}
-		}
-	}
-
 	return tools
 }
 
@@ -422,166 +301,20 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 		}
 		return mcpText(data), nil
 
-	// Event tools (require event API key)
-	case "get_event":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		var data any
-		if err := s.getJSONWithEventKey("/api/public/events/current", &data); err != nil {
-			return nil, err
-		}
-		return mcpText(data), nil
-
-	case "update_event":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		// Get event slug first
-		var eventResp struct {
-			Event struct {
-				Slug string `json:"slug"`
-			} `json:"event"`
-		}
-		if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-			return nil, err
-		}
-		var data any
-		if err := s.patchJSONWithEventKey(fmt.Sprintf("/api/public/events/%s", eventResp.Event.Slug), payload.Arguments, &data); err != nil {
-			return nil, err
-		}
-		return mcpText(data), nil
-
-	case "get_widgets":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		var eventResp struct {
-			Event struct {
-				Slug       string `json:"slug"`
-				Challenges []any  `json:"challenges"`
-			} `json:"event"`
-		}
-		if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-			return nil, err
-		}
-		return mcpText(map[string]any{"challenges": eventResp.Event.Challenges}), nil
-
-	case "get_single_widget":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		slug, _ := payload.Arguments["slug"].(string)
-		if slug == "" {
-			return nil, fmt.Errorf("slug is required")
-		}
-		var eventResp struct {
-			Event struct {
-				Challenges []map[string]any `json:"challenges"`
-			} `json:"event"`
-		}
-		if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-			return nil, err
-		}
-		for _, ch := range eventResp.Event.Challenges {
-			if chSlug, _ := ch["slug"].(string); chSlug == slug {
-				return mcpText(ch), nil
-			}
-		}
-		return nil, fmt.Errorf("widget with slug %q not found", slug)
-
-	case "create_widget":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		var eventResp struct {
-			Event struct{ Slug string `json:"slug"` } `json:"event"`
-		}
-		if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-			return nil, err
-		}
-		var data any
-		if err := s.postJSONWithEventKey(fmt.Sprintf("/api/public/events/%s/challenges", eventResp.Event.Slug), payload.Arguments, &data); err != nil {
-			return nil, err
-		}
-		return mcpText(data), nil
-
-	case "update_widget":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		slug, _ := payload.Arguments["slug"].(string)
-		if slug == "" {
-			return nil, fmt.Errorf("slug is required")
-		}
-		var eventResp struct {
-			Event struct{ Slug string `json:"slug"` } `json:"event"`
-		}
-		if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-			return nil, err
-		}
-		patch := make(map[string]any)
-		for k, v := range payload.Arguments {
-			if k != "slug" {
-				patch[k] = v
-			}
-		}
-		var data any
-		if err := s.patchJSONWithEventKey(fmt.Sprintf("/api/public/events/%s/challenges/%s", eventResp.Event.Slug, slug), patch, &data); err != nil {
-			return nil, err
-		}
-		return mcpText(data), nil
-
-	case "delete_widget":
-		if s.eventApiKey == "" {
-			return nil, fmt.Errorf("event API key required for this tool")
-		}
-		slug, _ := payload.Arguments["slug"].(string)
-		if slug == "" {
-			return nil, fmt.Errorf("slug is required")
-		}
-		var eventResp struct {
-			Event struct{ Slug string `json:"slug"` } `json:"event"`
-		}
-		if err := s.getJSONWithEventKey("/api/public/events/current", &eventResp); err != nil {
-			return nil, err
-		}
-		var data any
-		if err := s.deleteJSONWithEventKey(fmt.Sprintf("/api/public/events/%s/challenges/%s", eventResp.Event.Slug, slug), &data); err != nil {
-			return nil, err
-		}
-		return mcpText(data), nil
-
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", payload.Name)
 	}
 }
 
 func (s *mcpServer) getJSON(path string, out any) error {
-	return s.requestJSON(http.MethodGet, path, nil, out, false)
+	return s.requestJSON(http.MethodGet, path, nil, out)
 }
 
 func (s *mcpServer) postJSON(path string, body any, out any) error {
-	return s.requestJSON(http.MethodPost, path, body, out, false)
+	return s.requestJSON(http.MethodPost, path, body, out)
 }
 
-func (s *mcpServer) getJSONWithEventKey(path string, out any) error {
-	return s.requestJSON(http.MethodGet, path, nil, out, true)
-}
-
-func (s *mcpServer) postJSONWithEventKey(path string, body any, out any) error {
-	return s.requestJSON(http.MethodPost, path, body, out, true)
-}
-
-func (s *mcpServer) patchJSONWithEventKey(path string, body any, out any) error {
-	return s.requestJSON(http.MethodPatch, path, body, out, true)
-}
-
-func (s *mcpServer) deleteJSONWithEventKey(path string, out any) error {
-	return s.requestJSON(http.MethodDelete, path, nil, out, true)
-}
-
-func (s *mcpServer) requestJSON(method, path string, body any, out any, useEventKey bool) error {
+func (s *mcpServer) requestJSON(method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -600,9 +333,7 @@ func (s *mcpServer) requestJSON(method, path string, body any, out any, useEvent
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if useEventKey && s.eventApiKey != "" {
-		req.Header.Set("X-Hackless-Event-API-Key", s.eventApiKey)
-	} else if s.apiKey != "" {
+	if s.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	}
 
