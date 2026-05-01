@@ -89,9 +89,9 @@ For Claude Desktop usage you usually do not need Railway; the normal flow is to 
 - `update_event`
 - `toggle_event_tool`
 - `invite_event_participant`
-- `create_widget`
-- `update_widget`
-- `delete_widget`
+- `propose_event_challenge`
+- `update_event_challenge`
+- `delete_event_challenge`
 - `search_users`
 - `get_challenge`
 - `get_my_progress`
