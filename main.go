@@ -312,9 +312,7 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 func (s *mcpServer) buildToolList() []toolDef {
 	tools := make([]toolDef, 0, len(globalTools)+len(eventTools))
 	tools = append(tools, globalTools...)
-	if s.eventApiKey != "" {
-		tools = append(tools, eventTools...)
-	}
+	tools = append(tools, eventTools...)
 	return tools
 }
 
