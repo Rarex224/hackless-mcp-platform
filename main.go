@@ -41,14 +41,20 @@ type toolDef struct {
 }
 
 type mcpServer struct {
-	baseURL      string
-	cookie       string
-	apiKey       string
-	client       *http.Client
+	baseURL     string
+	cookie      string
+	apiKey      string
+	eventApiKey string
+	client      *http.Client
 }
 
 // Global tools always available (require user API key)
 var globalTools = []toolDef{
+	{
+		Name:        "health",
+		Description: "Check if the Hackless API is reachable.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 	{
 		Name:        "list_challenges",
 		Description: "List public Hackless challenges.",
@@ -78,6 +84,57 @@ var globalTools = []toolDef{
 	},
 }
 
+// Event tools require HACKLESS_EVENT_API_KEY.
+var eventTools = []toolDef{
+	{
+		Name:        "get_event",
+		Description: "Get the current event details for the configured event API key.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "update_event",
+		Description: "Update the current event title and/or description.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":       map[string]any{"type": "string", "description": "New event title"},
+				"description": map[string]any{"type": "string", "description": "New event description"},
+			},
+		},
+	},
+	{
+		Name:        "add_event_challenges",
+		Description: "Add challenges to the current event.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"challengeIds": map[string]any{
+					"type":        "array",
+					"description": "Challenge IDs to add",
+					"items":       map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"challengeIds"},
+		},
+	},
+	{
+		Name:        "remove_event_challenge",
+		Description: "Remove a challenge from the current event.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"challengeId": map[string]any{"type": "string", "description": "Challenge ID to remove"},
+			},
+			"required": []string{"challengeId"},
+		},
+	},
+	{
+		Name:        "list_event_participants",
+		Description: "List participants and scores for the current event.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+}
+
 func main() {
 	httpMode := flag.Bool("http", false, "run as a local HTTP test server instead of stdio MCP")
 	addr := flag.String("addr", ":8000", "HTTP listen address")
@@ -86,9 +143,10 @@ func main() {
 
 	baseURL := resolveBaseURL(*baseURLFlag, flag.Args())
 	srv := &mcpServer{
-		baseURL: baseURL,
-		cookie:  env("HACKLESS_COOKIE", ""),
-		apiKey:  env("HACKLESS_API_KEY", ""),
+		baseURL:     baseURL,
+		cookie:      env("HACKLESS_COOKIE", ""),
+		apiKey:      env("HACKLESS_API_KEY", ""),
+		eventApiKey: env("HACKLESS_EVENT_API_KEY", ""),
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -252,8 +310,11 @@ func (s *mcpServer) handleJSONRPC(req jsonRPCRequest) jsonRPCResponse {
 
 // buildToolList returns the list of available tools.
 func (s *mcpServer) buildToolList() []toolDef {
-	tools := make([]toolDef, len(globalTools))
-	copy(tools, globalTools)
+	tools := make([]toolDef, 0, len(globalTools)+len(eventTools))
+	tools = append(tools, globalTools...)
+	if s.eventApiKey != "" {
+		tools = append(tools, eventTools...)
+	}
 	return tools
 }
 
@@ -271,6 +332,13 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 	case "list_challenges":
 		var data any
 		if err := s.getJSON("/api/public/challenges", &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "health":
+		var data any
+		if err := s.getJSON("/api/public/health", &data); err != nil {
 			return nil, err
 		}
 		return mcpText(data), nil
@@ -301,20 +369,114 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 		}
 		return mcpText(data), nil
 
+	case "get_event":
+		if err := s.requireEventKey(); err != nil {
+			return nil, err
+		}
+		var data any
+		if err := s.getJSONWithKey("/api/public/event", s.eventApiKey, &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "update_event":
+		if err := s.requireEventKey(); err != nil {
+			return nil, err
+		}
+		body := map[string]any{}
+		if title, _ := payload.Arguments["title"].(string); title != "" {
+			body["title"] = title
+		}
+		if description, _ := payload.Arguments["description"].(string); description != "" {
+			body["description"] = description
+		}
+		if len(body) == 0 {
+			return nil, fmt.Errorf("title or description is required")
+		}
+		var data any
+		if err := s.patchJSONWithKey("/api/public/event", body, s.eventApiKey, &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "add_event_challenges":
+		if err := s.requireEventKey(); err != nil {
+			return nil, err
+		}
+		rawIDs, ok := payload.Arguments["challengeIds"].([]any)
+		if !ok || len(rawIDs) == 0 {
+			return nil, fmt.Errorf("challengeIds is required")
+		}
+		challengeIds := make([]string, 0, len(rawIDs))
+		for _, raw := range rawIDs {
+			id, _ := raw.(string)
+			if id != "" {
+				challengeIds = append(challengeIds, id)
+			}
+		}
+		if len(challengeIds) == 0 {
+			return nil, fmt.Errorf("challengeIds is required")
+		}
+		var data any
+		if err := s.postJSONWithKey("/api/public/event/challenges", map[string]any{"challengeIds": challengeIds}, s.eventApiKey, &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "remove_event_challenge":
+		if err := s.requireEventKey(); err != nil {
+			return nil, err
+		}
+		challengeId, _ := payload.Arguments["challengeId"].(string)
+		if challengeId == "" {
+			return nil, fmt.Errorf("challengeId is required")
+		}
+		var data any
+		if err := s.deleteJSONWithKey(fmt.Sprintf("/api/public/event/challenges/%s", challengeId), s.eventApiKey, &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "list_event_participants":
+		if err := s.requireEventKey(); err != nil {
+			return nil, err
+		}
+		var data any
+		if err := s.getJSONWithKey("/api/public/event/participants", s.eventApiKey, &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", payload.Name)
 	}
 }
 
 func (s *mcpServer) getJSON(path string, out any) error {
-	return s.requestJSON(http.MethodGet, path, nil, out)
+	return s.requestJSON(http.MethodGet, path, nil, out, s.apiKey)
 }
 
 func (s *mcpServer) postJSON(path string, body any, out any) error {
-	return s.requestJSON(http.MethodPost, path, body, out)
+	return s.requestJSON(http.MethodPost, path, body, out, s.apiKey)
 }
 
-func (s *mcpServer) requestJSON(method, path string, body any, out any) error {
+func (s *mcpServer) getJSONWithKey(path, apiKey string, out any) error {
+	return s.requestJSON(http.MethodGet, path, nil, out, apiKey)
+}
+
+func (s *mcpServer) postJSONWithKey(path string, body any, apiKey string, out any) error {
+	return s.requestJSON(http.MethodPost, path, body, out, apiKey)
+}
+
+func (s *mcpServer) patchJSONWithKey(path string, body any, apiKey string, out any) error {
+	return s.requestJSON(http.MethodPatch, path, body, out, apiKey)
+}
+
+func (s *mcpServer) deleteJSONWithKey(path, apiKey string, out any) error {
+	return s.requestJSON(http.MethodDelete, path, nil, out, apiKey)
+}
+
+func (s *mcpServer) requestJSON(method, path string, body any, out any, apiKey string) error {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -333,8 +495,8 @@ func (s *mcpServer) requestJSON(method, path string, body any, out any) error {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if s.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	if s.cookie != "" {
@@ -393,4 +555,11 @@ func resolveBaseURL(flagValue string, args []string) string {
 		return strings.TrimRight(value, "/")
 	}
 	return "https://hackless.dev"
+}
+
+func (s *mcpServer) requireEventKey() error {
+	if strings.TrimSpace(s.eventApiKey) == "" {
+		return fmt.Errorf("HACKLESS_EVENT_API_KEY is required for event tools")
+	}
+	return nil
 }
