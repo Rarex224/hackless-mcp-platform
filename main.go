@@ -61,9 +61,31 @@ var globalTools = []toolDef{
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
+		Name:        "get_challenge",
+		Description: "Get details for a challenge by slug.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug": map[string]any{"type": "string", "description": "Challenge slug"},
+			},
+			"required": []string{"slug"},
+		},
+	},
+	{
 		Name:        "get_my_progress",
 		Description: "Get the authenticated user's profile and progress (requires API key).",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "get_public_profile",
+		Description: "Get a public profile by user ID.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"userId": map[string]any{"type": "string", "description": "User ID"},
+			},
+			"required": []string{"userId"},
+		},
 	},
 	{
 		Name:        "view_leaderboard",
@@ -80,6 +102,17 @@ var globalTools = []toolDef{
 				"flag": map[string]any{"type": "string", "description": "Flag to submit"},
 			},
 			"required": []string{"slug", "flag"},
+		},
+	},
+	{
+		Name:        "list_writeups_for_challenge",
+		Description: "List writeups for a challenge that has already been solved.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug": map[string]any{"type": "string", "description": "Challenge slug"},
+			},
+			"required": []string{"slug"},
 		},
 	},
 }
@@ -334,6 +367,17 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 		}
 		return mcpText(data), nil
 
+	case "get_challenge":
+		slug, _ := payload.Arguments["slug"].(string)
+		if slug == "" {
+			return nil, fmt.Errorf("slug is required")
+		}
+		var data any
+		if err := s.getJSON(fmt.Sprintf("/api/public/challenges/%s", slug), &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
 	case "health":
 		var data any
 		if err := s.getJSON("/api/public/health", &data); err != nil {
@@ -344,6 +388,17 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 	case "get_my_progress":
 		var data any
 		if err := s.getJSON("/api/public/me", &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "get_public_profile":
+		userID, _ := payload.Arguments["userId"].(string)
+		if userID == "" {
+			return nil, fmt.Errorf("userId is required")
+		}
+		var data any
+		if err := s.getJSON(fmt.Sprintf("/api/public/profiles/%s", userID), &data); err != nil {
 			return nil, err
 		}
 		return mcpText(data), nil
@@ -363,6 +418,17 @@ func (s *mcpServer) callTool(params json.RawMessage) (any, error) {
 		}
 		var data any
 		if err := s.postJSON(fmt.Sprintf("/api/public/challenges/%s/submit", slug), map[string]string{"flag": flag}, &data); err != nil {
+			return nil, err
+		}
+		return mcpText(data), nil
+
+	case "list_writeups_for_challenge":
+		slug, _ := payload.Arguments["slug"].(string)
+		if slug == "" {
+			return nil, fmt.Errorf("slug is required")
+		}
+		var data any
+		if err := s.getJSON(fmt.Sprintf("/api/public/challenges/%s/writeups", slug), &data); err != nil {
 			return nil, err
 		}
 		return mcpText(data), nil

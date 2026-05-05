@@ -83,10 +83,12 @@ For Claude Desktop usage you usually do not need Railway; the normal flow is to 
 
 - `health`
 - `list_challenges`
+- `get_challenge`
 - `get_my_progress`
 - `get_public_profile`
 - `view_leaderboard`
 - `submit_flag`
+- `list_writeups_for_challenge`
 - `get_event`
 - `update_event`
 - `add_event_challenges`
